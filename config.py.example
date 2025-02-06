@@ -1,0 +1,13 @@
+# config.py
+
+# Your bot token from Discord Developer Portal
+TOKEN = "YOUR_BOT_TOKEN_HERE"
+
+# Dictionary of guild IDs and their monitored channels
+# Format: {guild_id: [channel_id1, channel_id2, ...]}
+MONITORED_GUILDS = {
+    123456789: [  # Replace with your guild ID
+        987654321,  # Replace with channel IDs
+        987654322
+    ]
+}
