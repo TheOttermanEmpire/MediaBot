@@ -1,11 +1,24 @@
 import discord
+from discord import app_commands
 import re
 import config
 
 # Initialize bot with necessary intents
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
+
+
+class RoleManagerBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        # Sync commands with Discord
+        await self.tree.sync()
+
+
+client = RoleManagerBot()
 
 # URL regex pattern
 url_pattern = re.compile(
@@ -16,6 +29,77 @@ url_pattern = re.compile(
 @client.event
 async def on_ready():
     print(f"Bot is ready and logged in as {client.user}")
+
+
+# Add this to config.py:
+# COMMAND_CHANNEL_ID = 123456789  # Replace with your command channel ID
+# HORNY_ROLE_ID = 987654321      # Replace with your role ID
+
+
+@client.tree.command(name="horny", description="Assigns the horny role to the user")
+async def horny(interaction: discord.Interaction):
+    # Check if command is used in the correct channel
+    if interaction.channel_id != config.COMMAND_CHANNEL_ID:
+        await interaction.response.send_message(
+            "This command can only be used in the designated channel.", ephemeral=True
+        )
+        return
+
+    try:
+        # Get the role object
+        role = interaction.guild.get_role(config.HORNY_ROLE_ID)
+        if role is None:
+            await interaction.response.send_message(
+                "Role not found. Please contact an administrator.", ephemeral=True
+            )
+            return
+
+        # Add the role to the user
+        await interaction.user.add_roles(role)
+        await interaction.response.send_message(
+            f"Role {role.name} has been added.", ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "I don't have permission to manage roles.", ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"An error occurred: {str(e)}", ephemeral=True
+        )
+
+
+@client.tree.command(name="unhorny", description="Removes the horny role from the user")
+async def unhorny(interaction: discord.Interaction):
+    # Check if command is used in the correct channel
+    if interaction.channel_id != config.COMMAND_CHANNEL_ID:
+        await interaction.response.send_message(
+            "This command can only be used in the designated channel.", ephemeral=True
+        )
+        return
+
+    try:
+        # Get the role object
+        role = interaction.guild.get_role(config.HORNY_ROLE_ID)
+        if role is None:
+            await interaction.response.send_message(
+                "Role not found. Please contact an administrator.", ephemeral=True
+            )
+            return
+
+        # Remove the role from the user
+        await interaction.user.remove_roles(role)
+        await interaction.response.send_message(
+            f"Role {role.name} has been removed.", ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "I don't have permission to manage roles.", ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"An error occurred: {str(e)}", ephemeral=True
+        )
 
 
 @client.event
