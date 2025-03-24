@@ -31,11 +31,6 @@ async def on_ready():
     print(f"Bot is ready and logged in as {client.user}")
 
 
-# Add this to config.py:
-# COMMAND_CHANNEL_ID = 123456789  # Replace with your command channel ID
-# HORNY_ROLE_ID = 987654321      # Replace with your role ID
-
-
 @client.tree.command(name="horny", description="Assigns the horny role to the user")
 async def horny(interaction: discord.Interaction):
     # Check if command is used in the correct channel
@@ -128,6 +123,34 @@ async def on_message(message):
                 )
             except discord.errors.Forbidden:
                 print(f"Failed to send notification in channel {message.channel.id}")
+
+
+@client.event
+async def on_message_edit(before, after):
+    # Ignore edits from the bot itself
+    if after.author == client.user:
+        return
+
+    # Check if edited message is in a monitored channel
+    if (
+        after.guild.id in config.MONITORED_GUILDS
+        and after.channel.id in config.MONITORED_GUILDS[after.guild.id]
+    ):
+        # Check if the edited message has attachments or URLs
+        has_media = len(after.attachments) > 0
+        has_url = bool(url_pattern.search(after.content))
+
+        if not (has_media or has_url):
+            # Delete the message that no longer has media
+            await after.delete()
+            # Send ephemeral notification
+            try:
+                await after.channel.send(
+                    content=f"{after.author.mention} Your edited message was deleted. Messages in this channel must include media or a URL.",
+                    delete_after=10,
+                )
+            except discord.errors.Forbidden:
+                print(f"Failed to send notification in channel {after.channel.id}")
 
 
 # Error handling
