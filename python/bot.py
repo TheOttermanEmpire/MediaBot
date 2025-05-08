@@ -31,72 +31,6 @@ async def on_ready():
     print(f"Bot is ready and logged in as {client.user}")
 
 
-@client.tree.command(name="horny", description="Assigns the horny role to the user")
-async def horny(interaction: discord.Interaction):
-    # Check if command is used in the correct channel
-    if interaction.channel_id != config.COMMAND_CHANNEL_ID:
-        await interaction.response.send_message(
-            "This command can only be used in the designated channel.", ephemeral=True
-        )
-        return
-
-    try:
-        # Get the role object
-        role = interaction.guild.get_role(config.HORNY_ROLE_ID)
-        if role is None:
-            await interaction.response.send_message(
-                "Role not found. Please contact an administrator.", ephemeral=True
-            )
-            return
-
-        # Add the role to the user
-        await interaction.user.add_roles(role)
-        await interaction.response.send_message(
-            f"Role {role.name} has been added.", ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to manage roles.", ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(
-            f"An error occurred: {str(e)}", ephemeral=True
-        )
-
-
-@client.tree.command(name="unhorny", description="Removes the horny role from the user")
-async def unhorny(interaction: discord.Interaction):
-    # Check if command is used in the correct channel
-    if interaction.channel_id != config.COMMAND_CHANNEL_ID:
-        await interaction.response.send_message(
-            "This command can only be used in the designated channel.", ephemeral=True
-        )
-        return
-
-    try:
-        # Get the role object
-        role = interaction.guild.get_role(config.HORNY_ROLE_ID)
-        if role is None:
-            await interaction.response.send_message(
-                "Role not found. Please contact an administrator.", ephemeral=True
-            )
-            return
-
-        # Remove the role from the user
-        await interaction.user.remove_roles(role)
-        await interaction.response.send_message(
-            f"Role {role.name} has been removed.", ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to manage roles.", ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(
-            f"An error occurred: {str(e)}", ephemeral=True
-        )
-
-
 @client.event
 async def on_message(message):
     # Ignore messages from the bot itself
@@ -123,6 +57,18 @@ async def on_message(message):
                 )
             except discord.errors.Forbidden:
                 print(f"Failed to send notification in channel {message.channel.id}")
+        else:
+            # Valid message with media or URL - create a thread
+            # Create a meaningful thread name
+            thread_name = f"{message.author.display_name[:20]}-msg-{message.id}"
+
+            # Create the thread
+            thread = await message.create_thread(name=thread_name)
+
+            # Send a notification and immediately delete it
+            # User will still get the notification
+            notification = await thread.send(f"{message.author.mention}")
+            await notification.delete()
 
 
 @client.event
@@ -151,6 +97,34 @@ async def on_message_edit(before, after):
                 )
             except discord.errors.Forbidden:
                 print(f"Failed to send notification in channel {after.channel.id}")
+
+
+@client.event
+async def on_message_delete(message):
+    # Ignore deletions from the bot itself
+    if message.author == client.user:
+        return
+
+    # Check if deleted message was in a monitored channel
+    if (
+        message.guild.id in config.MONITORED_GUILDS
+        and message.channel.id in config.MONITORED_GUILDS[message.guild.id]
+    ):
+        # Pattern to match in thread names
+        thread_pattern = f"-msg-{message.id}"
+
+        # Check all active threads in the channel
+        for thread in message.channel.threads:
+            # If thread name contains the message ID, it was created from this message
+            if thread_pattern in thread.name:
+                try:
+                    await thread.delete()
+                    print(
+                        f"Deleted thread {thread.name} as the original message was deleted"
+                    )
+                except discord.errors.Forbidden:
+                    print(f"Failed to delete thread {thread.name}")
+                break
 
 
 # Error handling
