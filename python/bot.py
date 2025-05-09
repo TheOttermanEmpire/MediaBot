@@ -66,8 +66,6 @@ async def on_message(message):
             thread = await message.create_thread(
                 name=thread_name, auto_archive_duration=60
             )
-            # Remove the message author from the thread
-            await thread.remove_user(message.author)
 
 
 @client.event
