@@ -60,15 +60,14 @@ async def on_message(message):
         else:
             # Valid message with media or URL - create a thread
             # Create a meaningful thread name
-            thread_name = f"{message.author.display_name[:20]}-msg-{message.id}"
+            thread_name = f"{message.author.display_name} ({message.id})"
 
             # Create the thread
-            thread = await message.create_thread(name=thread_name)
-
-            # Send a notification and immediately delete it
-            # User will still get the notification
-            notification = await thread.send(f"{message.author.mention}")
-            await notification.delete()
+            thread = await message.create_thread(
+                name=thread_name, auto_archive_duration=60
+            )
+            # Remove the message author from the thread
+            await thread.remove_user(message.author)
 
 
 @client.event
@@ -111,7 +110,7 @@ async def on_message_delete(message):
         and message.channel.id in config.MONITORED_GUILDS[message.guild.id]
     ):
         # Pattern to match in thread names
-        thread_pattern = f"-msg-{message.id}"
+        thread_pattern = f"({message.id})"
 
         # Check all active threads in the channel
         for thread in message.channel.threads:
