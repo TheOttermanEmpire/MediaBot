@@ -58,14 +58,11 @@ async def on_message(message):
             except discord.errors.Forbidden:
                 print(f"Failed to send notification in channel {message.channel.id}")
         else:
-            # Valid message with media or URL - create a thread
-            # Create a meaningful thread name
-            thread_name = f"{message.author.display_name} ({message.id})"
-
-            # Create the thread
-            thread = await message.create_thread(
-                name=thread_name, auto_archive_duration=60
-            )
+            # Valid message with media or URL - add thread emoji reaction
+            try:
+                await message.add_reaction("🧵")  # Thread emoji
+            except discord.errors.Forbidden:
+                print(f"Failed to add reaction in channel {message.channel.id}")
 
 
 @client.event
@@ -122,6 +119,33 @@ async def on_message_delete(message):
                 except discord.errors.Forbidden:
                     print(f"Failed to delete thread {thread.name}")
                 break
+
+
+@client.event
+async def on_reaction_add(reaction, user):
+    # Ignore reactions from the bot itself
+    if user == client.user:
+        return
+
+    message = reaction.message
+
+    # Check if message is in a monitored channel
+    if (
+        message.guild.id in config.MONITORED_GUILDS
+        and message.channel.id in config.MONITORED_GUILDS[message.guild.id]
+    ):
+        # Check if the reaction is the thread emoji
+        if str(reaction.emoji) == "🧵":
+            # Create a meaningful thread name
+            thread_name = f"{message.author.display_name} ({message.id})"
+
+            # Create the thread
+            thread = await message.create_thread(
+                name=thread_name, auto_archive_duration=60
+            )
+
+            # Remove all thread emoji reactions
+            await message.clear_reaction("🧵")
 
 
 # Error handling
