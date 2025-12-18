@@ -5,7 +5,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install the required modules
-RUN python3 -m pip install -U discord.py
+RUN python3 -m pip install -U discord.py openai
 
 # Specify the command to run when the container starts
 CMD ["python", "./bot.py"]

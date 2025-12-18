@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 import re
 import config
+from describe import get_image_title
 
 # Initialize bot with necessary intents
 intents = discord.Intents.default()
@@ -136,8 +137,27 @@ async def on_reaction_add(reaction, user):
     ):
         # Check if the reaction is the thread emoji
         if str(reaction.emoji) == "🧵":
-            # Create a meaningful thread name
-            thread_name = f"{message.author.display_name} ({message.id})"
+            # Try to generate a title from image if available
+            thread_name = None
+
+            # Check if message has image attachments
+            if message.attachments:
+                # Find first image attachment
+                for attachment in message.attachments:
+                    if attachment.content_type and attachment.content_type.startswith("image/"):
+                        try:
+                            # Get AI-generated title for the image
+                            image_title = get_image_title(attachment.url)
+                            thread_name = f"{image_title} ({message.id})"
+                            break
+                        except Exception as e:
+                            print(f"Failed to generate image title: {e}")
+                            # Will fall back to default naming
+                            break
+
+            # Fall back to default naming if no image or title generation failed
+            if thread_name is None:
+                thread_name = f"{message.author.display_name} ({message.id})"
 
             # Create the thread
             thread = await message.create_thread(
