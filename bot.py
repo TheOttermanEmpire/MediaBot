@@ -94,24 +94,27 @@ async def on_message_edit(before, after):
 
 
 @client.event
-async def on_message_delete(message):
-    if message.author == client.user:
+async def on_raw_message_delete(payload):
+    if (
+        payload.guild_id not in MONITORED_GUILDS
+        or payload.channel_id not in MONITORED_GUILDS[payload.guild_id]
+    ):
         return
 
-    if (
-        message.guild.id in MONITORED_GUILDS
-        and message.channel.id in MONITORED_GUILDS[message.guild.id]
-    ):
-        thread_pattern = f"({message.id})"
+    channel = client.get_channel(payload.channel_id)
+    if channel is None:
+        return
 
-        for thread in message.channel.threads:
-            if thread_pattern in thread.name:
-                try:
-                    await thread.delete()
-                    print(f"Deleted thread {thread.name} as the original message was deleted")
-                except discord.errors.Forbidden:
-                    print(f"Failed to delete thread {thread.name}")
-                break
+    thread_pattern = f"({payload.message_id})"
+
+    for thread in channel.threads:
+        if thread_pattern in thread.name:
+            try:
+                await thread.delete()
+                print(f"Deleted thread {thread.name} as the original message was deleted")
+            except discord.errors.Forbidden:
+                print(f"Failed to delete thread {thread.name}")
+            break
 
 
 @client.event
