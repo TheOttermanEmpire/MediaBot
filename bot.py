@@ -95,20 +95,28 @@ async def on_message_edit(before, after):
 
 @client.event
 async def on_raw_message_delete(payload):
+    if payload.guild_id is None:
+        return
     if (
         payload.guild_id not in MONITORED_GUILDS
         or payload.channel_id not in MONITORED_GUILDS[payload.guild_id]
     ):
         return
 
-    channel = client.get_channel(payload.channel_id)
-    if channel is None:
+    guild = client.get_guild(payload.guild_id)
+    if guild is None:
         return
 
     thread_pattern = f"({payload.message_id})"
 
-    for thread in channel.threads:
-        if thread_pattern in thread.name:
+    # Fetch active threads via API instead of relying on cache
+    try:
+        active_threads = await guild.active_threads()
+    except discord.errors.Forbidden:
+        return
+
+    for thread in active_threads:
+        if thread.parent_id == payload.channel_id and thread_pattern in thread.name:
             try:
                 await thread.delete()
                 print(f"Deleted thread {thread.name} as the original message was deleted")
