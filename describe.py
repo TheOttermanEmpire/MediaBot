@@ -3,36 +3,34 @@
 Get a short title for an image using OpenAI's GPT Vision API.
 
 Usage:
-    python describe_image.py <image_path_or_url>
+    python describe.py <image_path_or_url>
 
 Requirements:
     pip install openai
 """
 
 import base64
+import os
 import sys
 from openai import OpenAI
-import config
 
 
 def get_image_title(image_source: str) -> str:
     """Get a short title (5 words or less) for an image."""
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-    # Check if URL or local file
     if image_source.startswith(("http://", "https://")):
         image_content = {
             "type": "image_url",
             "image_url": {"url": image_source, "detail": "low"},
         }
     else:
-        # Local file - encode as base64
         with open(image_source, "rb") as f:
             base64_image = base64.b64encode(f.read()).decode("utf-8")
-        
+
         ext = image_source.lower().split(".")[-1]
         media_type = "image/png" if ext == "png" else "image/jpeg"
-        
+
         image_content = {
             "type": "image_url",
             "image_url": {"url": f"data:{media_type};base64,{base64_image}", "detail": "low"},
@@ -58,7 +56,7 @@ def get_image_title(image_source: str) -> str:
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python describe_image.py <image_path_or_url>")
+        print("Usage: python describe.py <image_path_or_url>")
         sys.exit(1)
-    
+
     print(get_image_title(sys.argv[1]))
