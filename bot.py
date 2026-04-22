@@ -32,7 +32,8 @@ class RoleManagerBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
+        synced = await self.tree.sync()
+        print(f"Synced {len(synced)} global commands: {[c.name for c in synced]}")
 
 
 client = RoleManagerBot()
@@ -137,23 +138,50 @@ async def reorder_booster_roles(guild: discord.Guild, booster_roles: dict):
 # Voice channel text cleanup
 # ---------------------------------------------------------------------------
 
+async def _bulk_delete(channel_id: int, ids: list):
+    """Delete a batch of message IDs using the bulk-delete endpoint (2–100 messages, <14 days old)."""
+    if len(ids) == 1:
+        await client.http.delete_message(channel_id, ids[0])
+    else:
+        await client.http.delete_messages(channel_id, ids)
+    await asyncio.sleep(1)
+
+
 async def _run_voice_cleanup():
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=48)
+    bulk_cutoff = now - timedelta(days=14)  # Discord rejects bulk-delete for messages older than this
     cutoff_obj = discord.Object(id=discord.utils.time_snowflake(cutoff))
+
     for channel_id in VOICE_TEXT_CHANNELS:
         channel = client.get_channel(channel_id)
         if channel is None:
             continue
         try:
+            bulk_ids = []
             async for message in channel.history(limit=None, before=cutoff_obj):
-                try:
-                    await message.delete()
-                    await asyncio.sleep(0.5)
-                except discord.errors.NotFound:
-                    pass
-                except discord.errors.Forbidden:
-                    print(f"No permission to delete messages in channel {channel_id}")
-                    break
+                if message.created_at >= bulk_cutoff:
+                    bulk_ids.append(message.id)
+                    if len(bulk_ids) == 100:
+                        await _bulk_delete(channel_id, bulk_ids)
+                        bulk_ids = []
+                else:
+                    # Flush any pending bulk batch before switching to individual deletes
+                    if bulk_ids:
+                        await _bulk_delete(channel_id, bulk_ids)
+                        bulk_ids = []
+                    try:
+                        await message.delete()
+                        await asyncio.sleep(1.5)
+                    except discord.errors.NotFound:
+                        pass
+                    except discord.errors.Forbidden:
+                        print(f"No permission to delete messages in channel {channel_id}")
+                        break
+
+            if bulk_ids:
+                await _bulk_delete(channel_id, bulk_ids)
+
         except discord.errors.Forbidden:
             print(f"No permission to read history in channel {channel_id}")
 
@@ -163,6 +191,13 @@ async def cleanup_voice_channels():
     await _run_voice_cleanup()
 
 
+@cleanup_voice_channels.before_loop
+async def before_cleanup():
+    # Wait 30 seconds after startup before the first run so the bot is fully
+    # settled and not competing with early interaction handling.
+    await asyncio.sleep(30)
+
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -170,6 +205,13 @@ async def cleanup_voice_channels():
 @client.event
 async def on_ready():
     print(f"Bot is ready and logged in as {client.user}")
+
+    # Clear stale guild-specific commands left over from any previous version
+    for guild in client.guilds:
+        client.tree.clear_commands(guild=guild)
+        await client.tree.sync(guild=guild)
+        print(f"Cleared guild commands for {guild.name} ({guild.id})")
+
     if VOICE_TEXT_CHANNELS and not cleanup_voice_channels.is_running():
         cleanup_voice_channels.start()
 
@@ -335,7 +377,10 @@ async def set_role(
     color: str,
     user: Optional[discord.Member] = None,
 ):
-    await interaction.response.defer(ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+    except discord.errors.NotFound:
+        return  # Interaction token expired before we could acknowledge it
 
     guild = interaction.guild
     caller = interaction.user
@@ -412,7 +457,10 @@ async def import_role(
     user: discord.Member,
     role: discord.Role,
 ):
-    await interaction.response.defer(ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+    except discord.errors.NotFound:
+        return  # Interaction token expired before we could acknowledge it
 
     if not member_is_moderator(interaction.user):
         await interaction.followup.send(
