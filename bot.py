@@ -165,9 +165,14 @@ async def _run_voice_cleanup():
         bulk_ids = []
         bulk_count = 0
         old_count = 0
+        scan_count = 0
 
         try:
             async for message in channel.history(limit=None, before=cutoff_obj):
+                scan_count += 1
+                if scan_count % 500 == 0:
+                    print(f"[cleanup] #{channel.name}: scanned {scan_count} messages ({bulk_count} bulk-deleted, {old_count} individually deleted so far)")
+
                 if message.created_at >= bulk_cutoff:
                     bulk_ids.append(message.id)
                     if len(bulk_ids) == 100:
@@ -184,7 +189,9 @@ async def _run_voice_cleanup():
                     try:
                         await message.delete()
                         old_count += 1
-                        await asyncio.sleep(1.5)
+                        if old_count % 50 == 0:
+                            print(f"[cleanup] #{channel.name}: individually deleted {old_count} old messages so far")
+                        await asyncio.sleep(1)
                     except discord.errors.NotFound:
                         pass
                     except discord.errors.Forbidden:
