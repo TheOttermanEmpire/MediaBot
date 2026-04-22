@@ -9,4 +9,12 @@ services:
       # JSON map of guild ID -> list of monitored channel IDs
       MONITORED_GUILDS: '{"123456789": [99881231231, 1233341213]}'
       BOOSTER_REQUIRED_ROLE_ID: "1334991587285012583"
+      # Role ID for moderators (can run /role on behalf of others, use /importrole)
+      MODERATOR_ROLE_ID: "YOUR_MODERATOR_ROLE_ID_HERE"
+      # Role that sits directly above all custom booster roles — used for ordering
+      BOOSTER_ROLE_ANCHOR_ID: "YOUR_ANCHOR_ROLE_ID_HERE"
+      # JSON array of voice channel IDs whose built-in text chat ("Open Chat") should be purged after 48h
+      VOICE_TEXT_CHANNELS: '[123456789, 987654321]'
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
