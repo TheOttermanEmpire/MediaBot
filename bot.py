@@ -20,6 +20,7 @@ MODERATOR_ROLE_ID = int(os.environ.get("MODERATOR_ROLE_ID", "0"))
 BOOSTER_ROLE_ANCHOR_ID = int(os.environ.get("BOOSTER_ROLE_ANCHOR_ID", "0"))
 VOICE_TEXT_CHANNELS = [int(c) for c in json.loads(os.environ.get("VOICE_TEXT_CHANNELS", "[]"))]
 BOOSTER_ROLES_FILE = os.environ.get("BOOSTER_ROLES_FILE", "/app/data/booster_roles.json")
+VOICE_WARNED_USERS_FILE = os.environ.get("VOICE_WARNED_USERS_FILE", "/app/data/voice_warned_users.json")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -60,6 +61,28 @@ def save_booster_roles(mapping: dict):
         os.makedirs(directory, exist_ok=True)
     with open(BOOSTER_ROLES_FILE, "w") as f:
         json.dump({str(k): str(v) for k, v in mapping.items()}, f)
+
+
+# ---------------------------------------------------------------------------
+# Voice channel first-message warning persistence
+# ---------------------------------------------------------------------------
+
+_warned_users: set[int] = set()
+
+
+def load_warned_users() -> set[int]:
+    if os.path.exists(VOICE_WARNED_USERS_FILE):
+        with open(VOICE_WARNED_USERS_FILE) as f:
+            return set(json.load(f))
+    return set()
+
+
+def save_warned_users(warned: set[int]):
+    directory = os.path.dirname(VOICE_WARNED_USERS_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(VOICE_WARNED_USERS_FILE, "w") as f:
+        json.dump(list(warned), f)
 
 
 # ---------------------------------------------------------------------------
@@ -243,8 +266,11 @@ async def before_cleanup():
 
 @client.event
 async def on_ready():
+    global _warned_users
+    _warned_users = load_warned_users()
     print(f"Bot is ready and logged in as {client.user}")
     print(f"VOICE_TEXT_CHANNELS config: {VOICE_TEXT_CHANNELS}")
+    print(f"[voice-warn] Loaded {len(_warned_users)} previously warned user(s)")
 
     # Clear stale guild-specific commands left over from any previous version
     for guild in client.guilds:
@@ -284,6 +310,21 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 async def on_message(message):
     if message.author == client.user:
         return
+
+    if message.channel.id in VOICE_TEXT_CHANNELS and message.author.id not in _warned_users:
+        _warned_users.add(message.author.id)
+        save_warned_users(_warned_users)
+        print(f"[voice-warn] First message from {message.author} ({message.author.id}) in #{message.channel.name} — sending warning")
+        try:
+            await message.channel.send(
+                f"### Voice Channel Warning\n"
+                f"Hey there {message.author.mention}!\n"
+                f"> __**All messages**__ sent in any voice channel are __**temporary**__ and will be __**deleted after 48 hours**__.\n"
+                f"> This is your **first and only warning**.\n"
+                f"-# For persistent voice chat, use any of the other channels in the server."
+            )
+        except discord.errors.Forbidden:
+            print(f"[voice-warn] No permission to send warning in channel {message.channel.id}")
 
     if (
         message.guild.id in MONITORED_GUILDS
