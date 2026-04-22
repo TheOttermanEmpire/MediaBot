@@ -45,6 +45,27 @@ url_pattern = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# Discord API retry helper
+# ---------------------------------------------------------------------------
+
+async def discord_retry(coro_func, *args, retries: int = 3, delay: float = 1.0, label: str = "", **kwargs):
+    """Call an async Discord API function, retrying up to `retries` times on HTTPException."""
+    for attempt in range(1, retries + 1):
+        try:
+            return await coro_func(*args, **kwargs)
+        except discord.errors.Forbidden:
+            raise  # permissions won't change between retries
+        except discord.HTTPException as e:
+            tag = f"[{label}] " if label else ""
+            if attempt < retries:
+                print(f"{tag}attempt {attempt}/{retries} failed ({e!r}), retrying in {delay}s…")
+                await asyncio.sleep(delay)
+            else:
+                print(f"{tag}all {retries} attempts failed. Last error: {e!r}")
+                raise
+
+
+# ---------------------------------------------------------------------------
 # Booster role persistence
 # ---------------------------------------------------------------------------
 
@@ -553,7 +574,14 @@ async def set_role(
             final_name = name if name is not None else role.name
             final_color = color_parsed if color_parsed is not None else role.color
             if name is not None or color is not None:
-                await role.edit(name=final_name, color=final_color)
+                try:
+                    await discord_retry(role.edit, name=final_name, color=final_color, label="/role edit")
+                except discord.errors.Forbidden:
+                    await interaction.followup.send("I don't have permission to edit that role.", ephemeral=True)
+                    return
+                except discord.HTTPException as e:
+                    await interaction.followup.send(f"Failed to edit role: {e}", ephemeral=True)
+                    return
         else:
             # Role was deleted externally — need both fields to recreate
             if name is None or color is None:
@@ -562,7 +590,14 @@ async def set_role(
                     ephemeral=True,
                 )
                 return
-            role = await guild.create_role(name=name, color=color_parsed)
+            try:
+                role = await discord_retry(guild.create_role, name=name, color=color_parsed, label="/role create")
+            except discord.errors.Forbidden:
+                await interaction.followup.send("I don't have permission to create roles.", ephemeral=True)
+                return
+            except discord.HTTPException as e:
+                await interaction.followup.send(f"Failed to create role: {e}", ephemeral=True)
+                return
             booster_roles[target.id] = role.id
             save_booster_roles(booster_roles)
             created = True
@@ -573,13 +608,27 @@ async def set_role(
                 ephemeral=True,
             )
             return
-        role = await guild.create_role(name=name, color=color_parsed)
+        try:
+            role = await discord_retry(guild.create_role, name=name, color=color_parsed, label="/role create")
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to create roles.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"Failed to create role: {e}", ephemeral=True)
+            return
         booster_roles[target.id] = role.id
         save_booster_roles(booster_roles)
         created = True
 
     if role not in target.roles:
-        await target.add_roles(role)
+        try:
+            await discord_retry(target.add_roles, role, label="/role add_roles")
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to assign that role.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"Failed to assign role: {e}", ephemeral=True)
+            return
 
     await reorder_booster_roles(guild, booster_roles)
 
@@ -634,7 +683,14 @@ async def import_role(
     save_booster_roles(booster_roles)
 
     if role not in user.roles:
-        await user.add_roles(role)
+        try:
+            await discord_retry(user.add_roles, role, label="/importrole add_roles")
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to assign that role.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"Failed to assign role: {e}", ephemeral=True)
+            return
 
     await reorder_booster_roles(interaction.guild, booster_roles)
 
@@ -642,6 +698,19 @@ async def import_role(
         f"Role **{role.name}** imported and assigned to {user.display_name}.",
         ephemeral=True,
     )
+
+
+@client.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    print(f"[app_command_error] /{interaction.command.name if interaction.command else '?'}: {error!r}")
+    msg = "An unexpected error occurred. Please try again later."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
