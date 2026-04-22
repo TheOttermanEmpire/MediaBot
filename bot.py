@@ -153,37 +153,63 @@ async def _run_voice_cleanup():
     bulk_cutoff = now - timedelta(days=14)  # Discord rejects bulk-delete for messages older than this
     cutoff_obj = discord.Object(id=discord.utils.time_snowflake(cutoff))
 
+    print(f"[cleanup] Starting voice channel cleanup ({len(VOICE_TEXT_CHANNELS)} channel(s))")
+
     for channel_id in VOICE_TEXT_CHANNELS:
         channel = client.get_channel(channel_id)
         if channel is None:
+            print(f"[cleanup] Channel {channel_id} not found in cache — skipping")
             continue
+
+        print(f"[cleanup] Scanning #{channel.name} ({channel_id})")
+        bulk_ids = []
+        bulk_count = 0
+        old_count = 0
+
         try:
-            bulk_ids = []
             async for message in channel.history(limit=None, before=cutoff_obj):
                 if message.created_at >= bulk_cutoff:
                     bulk_ids.append(message.id)
                     if len(bulk_ids) == 100:
                         await _bulk_delete(channel_id, bulk_ids)
+                        bulk_count += len(bulk_ids)
+                        print(f"[cleanup] #{channel.name}: bulk-deleted batch of 100 (total so far: {bulk_count})")
                         bulk_ids = []
                 else:
-                    # Flush any pending bulk batch before switching to individual deletes
                     if bulk_ids:
                         await _bulk_delete(channel_id, bulk_ids)
+                        bulk_count += len(bulk_ids)
+                        print(f"[cleanup] #{channel.name}: bulk-deleted final batch of {len(bulk_ids)} (total: {bulk_count})")
                         bulk_ids = []
                     try:
                         await message.delete()
+                        old_count += 1
                         await asyncio.sleep(1.5)
                     except discord.errors.NotFound:
                         pass
                     except discord.errors.Forbidden:
-                        print(f"No permission to delete messages in channel {channel_id}")
+                        print(f"[cleanup] #{channel.name}: no permission to delete messages — aborting channel")
                         break
 
             if bulk_ids:
                 await _bulk_delete(channel_id, bulk_ids)
+                bulk_count += len(bulk_ids)
+                print(f"[cleanup] #{channel.name}: bulk-deleted final batch of {len(bulk_ids)}")
 
         except discord.errors.Forbidden:
-            print(f"No permission to read history in channel {channel_id}")
+            print(f"[cleanup] #{channel.name}: no permission to read history — skipping")
+            continue
+        except Exception as e:
+            print(f"[cleanup] #{channel.name}: unexpected error — {e!r}")
+            continue
+
+        total = bulk_count + old_count
+        if total:
+            print(f"[cleanup] #{channel.name}: done — {bulk_count} bulk-deleted, {old_count} individually deleted, {total} total")
+        else:
+            print(f"[cleanup] #{channel.name}: nothing to delete")
+
+    print("[cleanup] Voice channel cleanup complete")
 
 
 @tasks.loop(hours=1)
@@ -191,11 +217,17 @@ async def cleanup_voice_channels():
     await _run_voice_cleanup()
 
 
+@cleanup_voice_channels.error
+async def cleanup_error(error: Exception):
+    print(f"[cleanup] Task crashed with unhandled error: {error!r}")
+
+
 @cleanup_voice_channels.before_loop
 async def before_cleanup():
     # Wait 30 seconds after startup before the first run so the bot is fully
     # settled and not competing with early interaction handling.
     await asyncio.sleep(30)
+    print("[cleanup] Starting first cleanup run after startup delay")
 
 
 # ---------------------------------------------------------------------------
@@ -205,14 +237,23 @@ async def before_cleanup():
 @client.event
 async def on_ready():
     print(f"Bot is ready and logged in as {client.user}")
+    print(f"VOICE_TEXT_CHANNELS config: {VOICE_TEXT_CHANNELS}")
 
     # Clear stale guild-specific commands left over from any previous version
     for guild in client.guilds:
-        client.tree.clear_commands(guild=guild)
-        await client.tree.sync(guild=guild)
-        print(f"Cleared guild commands for {guild.name} ({guild.id})")
+        try:
+            client.tree.clear_commands(guild=guild)
+            await client.tree.sync(guild=guild)
+            print(f"Cleared guild commands for {guild.name} ({guild.id})")
+        except Exception as e:
+            print(f"Failed to clear commands for {guild.name}: {e!r}")
 
-    if VOICE_TEXT_CHANNELS and not cleanup_voice_channels.is_running():
+    if not VOICE_TEXT_CHANNELS:
+        print("[cleanup] VOICE_TEXT_CHANNELS is empty — cleanup task not started")
+    elif cleanup_voice_channels.is_running():
+        print("[cleanup] Cleanup task already running")
+    else:
+        print("[cleanup] Starting cleanup task (first run in 30s)")
         cleanup_voice_channels.start()
 
 
@@ -365,16 +406,53 @@ async def on_error(event, *args, **kwargs):
 # Slash commands
 # ---------------------------------------------------------------------------
 
+async def _role_target(interaction: discord.Interaction) -> Optional[discord.Member]:
+    """Return the member whose role the autocomplete should reflect."""
+    namespace_user = getattr(interaction.namespace, "user", None)
+    if namespace_user and member_is_moderator(interaction.user):
+        return namespace_user
+    return interaction.user
+
+
+async def autocomplete_role_name(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    target = await _role_target(interaction)
+    booster_roles = load_booster_roles()
+    role_id = booster_roles.get(target.id)
+    if role_id:
+        role = interaction.guild.get_role(role_id)
+        if role and (not current or current.lower() in role.name.lower()):
+            return [app_commands.Choice(name=role.name, value=role.name)]
+    return []
+
+
+async def autocomplete_role_color(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    target = await _role_target(interaction)
+    booster_roles = load_booster_roles()
+    role_id = booster_roles.get(target.id)
+    if role_id:
+        role = interaction.guild.get_role(role_id)
+        if role and role.color.value != 0:
+            hex_color = f"#{role.color.value:06X}"
+            if not current or current.lower() in hex_color.lower():
+                return [app_commands.Choice(name=hex_color, value=hex_color)]
+    return []
+
+
 @client.tree.command(name="role", description="Set your custom booster role name and colour")
 @app_commands.describe(
-    name="The name for your custom role",
-    color="Role colour in hex format (e.g. #FF0000 or FF0000)",
+    name="The name for your custom role (leave blank to keep current)",
+    color="Role colour in hex format e.g. #FF0000 (leave blank to keep current)",
     user="[Moderators only] The user whose role to set",
 )
+@app_commands.autocomplete(name=autocomplete_role_name, color=autocomplete_role_color)
 async def set_role(
     interaction: discord.Interaction,
-    name: str,
-    color: str,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
     user: Optional[discord.Member] = None,
 ):
     try:
@@ -404,14 +482,16 @@ async def set_role(
         await interaction.followup.send(msg, ephemeral=True)
         return
 
-    color_parsed = parse_color(color)
-    if color_parsed is None:
-        await interaction.followup.send(
-            "Invalid color. Use hex format like `#FF0000` or `FF0000`.", ephemeral=True
-        )
-        return
+    color_parsed: Optional[discord.Color] = None
+    if color is not None:
+        color_parsed = parse_color(color)
+        if color_parsed is None:
+            await interaction.followup.send(
+                "Invalid color. Use hex format like `#FF0000` or `FF0000`.", ephemeral=True
+            )
+            return
 
-    if len(name) > 100:
+    if name is not None and len(name) > 100:
         await interaction.followup.send("Role name must be 100 characters or less.", ephemeral=True)
         return
 
@@ -422,14 +502,29 @@ async def set_role(
     if existing_role_id:
         role = guild.get_role(existing_role_id)
         if role:
-            await role.edit(name=name, color=color_parsed)
+            final_name = name if name is not None else role.name
+            final_color = color_parsed if color_parsed is not None else role.color
+            if name is not None or color is not None:
+                await role.edit(name=final_name, color=final_color)
         else:
-            # Role was deleted externally — create a fresh one
+            # Role was deleted externally — need both fields to recreate
+            if name is None or color is None:
+                await interaction.followup.send(
+                    "Your previous role no longer exists. Please provide both a name and colour to create a new one.",
+                    ephemeral=True,
+                )
+                return
             role = await guild.create_role(name=name, color=color_parsed)
             booster_roles[target.id] = role.id
             save_booster_roles(booster_roles)
             created = True
     else:
+        if name is None or color is None:
+            await interaction.followup.send(
+                "You don't have a custom role yet. Please provide both a name and colour.",
+                ephemeral=True,
+            )
+            return
         role = await guild.create_role(name=name, color=color_parsed)
         booster_roles[target.id] = role.id
         save_booster_roles(booster_roles)
@@ -440,8 +535,14 @@ async def set_role(
 
     await reorder_booster_roles(guild, booster_roles)
 
-    action = "created" if created else "updated"
-    await interaction.followup.send(f"Custom role **{name}** has been {action}!", ephemeral=True)
+    if created:
+        msg = f"Custom role **{role.name}** has been created!"
+    elif name is None and color is None:
+        msg = f"Your role **{role.name}** is unchanged."
+    else:
+        msg = f"Custom role **{role.name}** has been updated!"
+
+    await interaction.followup.send(msg, ephemeral=True)
 
 
 @client.tree.command(
