@@ -33,8 +33,20 @@ class RoleManagerBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        synced = await self.tree.sync()
-        print(f"Synced {len(synced)} global commands: {[c.name for c in synced]}")
+        # Register commands per-guild for instant propagation. Global command
+        # syncs can take up to an hour to appear and are slow to reflect edits;
+        # guild-scoped syncs are immediate.
+        for guild_id in MONITORED_GUILDS:
+            guild = discord.Object(id=guild_id)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(f"Synced {len(synced)} command(s) to guild {guild_id}: {[c.name for c in synced]}")
+
+        # Remove any commands left over from when they were registered globally,
+        # so they don't appear duplicated alongside the guild-scoped copies.
+        # (copy_global_to above left the global definitions intact in memory.)
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
 
 
 client = RoleManagerBot()
@@ -292,15 +304,6 @@ async def on_ready():
     print(f"Bot is ready and logged in as {client.user}")
     print(f"VOICE_TEXT_CHANNELS config: {VOICE_TEXT_CHANNELS}")
     print(f"[voice-warn] Loaded {len(_warned_users)} previously warned user(s)")
-
-    # Clear stale guild-specific commands left over from any previous version
-    for guild in client.guilds:
-        try:
-            client.tree.clear_commands(guild=guild)
-            await client.tree.sync(guild=guild)
-            print(f"Cleared guild commands for {guild.name} ({guild.id})")
-        except Exception as e:
-            print(f"Failed to clear commands for {guild.name}: {e!r}")
 
     if not VOICE_TEXT_CHANNELS:
         print("[cleanup] VOICE_TEXT_CHANNELS is empty — cleanup task not started")
