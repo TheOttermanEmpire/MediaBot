@@ -136,9 +136,9 @@ def parse_color(color_str: str) -> Optional[discord.Color]:
 
 
 def member_is_booster(member: discord.Member) -> bool:
-    if member.premium_since is not None:
-        return True
     if BOOSTER_REQUIRED_ROLE_ID and any(r.id == BOOSTER_REQUIRED_ROLE_ID for r in member.roles):
+        return True
+    if member.premium_since is not None:
         return True
     return False
 
@@ -293,6 +293,53 @@ async def before_cleanup():
     print("[cleanup] Starting first cleanup run after startup delay")
 
 
+async def _run_booster_role_reconciliation():
+    """Catch lapsed boosters whose role removal was missed (e.g. the bot was
+    offline when they stopped boosting, so on_member_update never fired)."""
+    booster_roles = load_booster_roles()
+    if not booster_roles:
+        return
+
+    print(f"[reconcile] Checking {len(booster_roles)} saved booster role(s)")
+    removed = 0
+
+    for guild in client.guilds:
+        if guild.id not in MONITORED_GUILDS:
+            continue
+        for user_id, role_id in list(booster_roles.items()):
+            member = guild.get_member(user_id)
+            if member is None:
+                continue
+            role = guild.get_role(role_id)
+            if role is None or role not in member.roles:
+                continue
+            if not member_is_booster(member):
+                try:
+                    await member.remove_roles(role, reason="No longer boosting (reconciliation)")
+                    removed += 1
+                    print(f"[reconcile] Removed booster role from {member.display_name} — no longer boosting")
+                except discord.errors.Forbidden:
+                    print(f"[reconcile] Failed to remove booster role from {member.display_name}")
+
+    print(f"[reconcile] Done — {removed} role(s) removed")
+
+
+@tasks.loop(hours=1)
+async def reconcile_booster_roles():
+    await _run_booster_role_reconciliation()
+
+
+@reconcile_booster_roles.error
+async def reconcile_error(error: Exception):
+    print(f"[reconcile] Task crashed with unhandled error: {error!r}")
+
+
+@reconcile_booster_roles.before_loop
+async def before_reconcile():
+    await asyncio.sleep(30)
+    print("[reconcile] Starting first booster role reconciliation after startup delay")
+
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -312,6 +359,12 @@ async def on_ready():
     else:
         print("[cleanup] Starting cleanup task (first run in 30s)")
         cleanup_voice_channels.start()
+
+    if reconcile_booster_roles.is_running():
+        print("[reconcile] Reconciliation task already running")
+    else:
+        print("[reconcile] Starting booster role reconciliation task (first run in 30s)")
+        reconcile_booster_roles.start()
 
 
 @client.event
