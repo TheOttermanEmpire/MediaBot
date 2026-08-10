@@ -385,6 +385,20 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
 @client.event
 async def on_message(message):
+    if message.type == discord.MessageType.thread_created:
+        # Redundant "X started a thread: Y" announcement — the thread is
+        # already visible via the indicator on the source message.
+        if (
+            message.guild is not None
+            and message.guild.id in MONITORED_GUILDS
+            and message.channel.id in MONITORED_GUILDS[message.guild.id]
+        ):
+            try:
+                await message.delete()
+            except discord.errors.Forbidden:
+                print(f"Failed to delete thread-created announcement in channel {message.channel.id}")
+        return
+
     if message.author == client.user:
         return
 
@@ -459,25 +473,22 @@ async def on_raw_message_delete(payload):
     ):
         return
 
-    guild = client.get_guild(payload.guild_id)
-    if guild is None:
+    # A thread created via Message.create_thread() shares its ID with the
+    # source message, so fetch it directly rather than scanning active_threads()
+    # (which misses threads that have already auto-archived).
+    try:
+        thread = await client.fetch_channel(payload.message_id)
+    except (discord.errors.NotFound, discord.errors.Forbidden):
         return
 
-    thread_pattern = f"({payload.message_id})"
+    if not isinstance(thread, discord.Thread) or thread.parent_id != payload.channel_id:
+        return
 
     try:
-        active_threads = await guild.active_threads()
+        await thread.delete()
+        print(f"Deleted thread {thread.name} as the original message was deleted")
     except discord.errors.Forbidden:
-        return
-
-    for thread in active_threads:
-        if thread.parent_id == payload.channel_id and thread_pattern in thread.name:
-            try:
-                await thread.delete()
-                print(f"Deleted thread {thread.name} as the original message was deleted")
-            except discord.errors.Forbidden:
-                print(f"Failed to delete thread {thread.name}")
-            break
+        print(f"Failed to delete thread {thread.name}")
 
 
 @client.event
