@@ -102,6 +102,11 @@ def save_booster_roles(mapping: dict):
 
 _warned_users: set[int] = set()
 
+# Threads waiting on their first reply; if none arrives within the timeout,
+# the thread is deleted and the 🧵 reaction is restored so it can be retried.
+THREAD_REPLY_TIMEOUT = 300  # 5 minutes
+_threads_awaiting_reply: set[int] = set()
+
 
 def load_warned_users() -> set[int]:
     if os.path.exists(VOICE_WARNED_USERS_FILE):
@@ -399,6 +404,13 @@ async def on_message(message):
                 print(f"Failed to delete thread-created announcement in channel {message.channel.id}")
         return
 
+    if (
+        isinstance(message.channel, discord.Thread)
+        and message.channel.id in _threads_awaiting_reply
+        and message.id != message.channel.id  # ignore the copied starter message
+    ):
+        _threads_awaiting_reply.discard(message.channel.id)
+
     if message.author == client.user:
         return
 
@@ -529,8 +541,34 @@ async def on_raw_reaction_add(payload):
     if thread_name is None:
         thread_name = f"{message.author.display_name} ({message.id})"
 
-    await message.create_thread(name=thread_name, auto_archive_duration=60)
+    thread = await message.create_thread(name=thread_name, auto_archive_duration=60)
     await message.clear_reaction("🧵")
+
+    _threads_awaiting_reply.add(thread.id)
+    asyncio.create_task(_delete_thread_if_no_reply(thread, message))
+
+
+async def _delete_thread_if_no_reply(thread: discord.Thread, message: discord.Message):
+    await asyncio.sleep(THREAD_REPLY_TIMEOUT)
+
+    if thread.id not in _threads_awaiting_reply:
+        return  # someone replied within the window
+
+    _threads_awaiting_reply.discard(thread.id)
+
+    try:
+        await thread.delete()
+        print(f"Deleted thread {thread.name} — no reply within {THREAD_REPLY_TIMEOUT}s")
+    except discord.errors.NotFound:
+        pass
+    except discord.errors.Forbidden:
+        print(f"Failed to delete idle thread {thread.name}")
+        return
+
+    try:
+        await message.add_reaction("🧵")
+    except (discord.errors.NotFound, discord.errors.Forbidden):
+        pass
 
 
 @client.event
