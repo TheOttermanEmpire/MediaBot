@@ -37,7 +37,7 @@ def get_image_title(image_source: str) -> str:
         }
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-nano",
         messages=[
             {
                 "role": "user",
@@ -47,11 +47,15 @@ def get_image_title(image_source: str) -> str:
                 ],
             }
         ],
-        max_tokens=20,
-        temperature=0,
+        # The GPT-5 family rejects `max_tokens` (use `max_completion_tokens`) and
+        # rejects `temperature` outright — only the default is accepted.
+        max_completion_tokens=32,
     )
 
-    return response.choices[0].message.content.strip().strip('"').strip("'")
+    title = response.choices[0].message.content
+    if not title:
+        raise ValueError("Model returned an empty title")
+    return title.strip().strip('"').strip("'")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import asyncio
+import activity
 from describe import get_image_title
 
 TOKEN = os.environ["DISCORD_TOKEN"]
@@ -25,6 +26,8 @@ VOICE_WARNED_USERS_FILE = os.environ.get("VOICE_WARNED_USERS_FILE", "/app/data/v
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True  # privileged intent — must be enabled in the Developer Portal
+intents.reactions = True
+intents.voice_states = True
 
 
 class RoleManagerBot(discord.Client):
@@ -50,6 +53,7 @@ class RoleManagerBot(discord.Client):
 
 
 client = RoleManagerBot()
+activity.setup(client)
 
 url_pattern = re.compile(
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
@@ -371,6 +375,10 @@ async def on_ready():
         print("[reconcile] Starting booster role reconciliation task (first run in 30s)")
         reconcile_booster_roles.start()
 
+    # Activity catch-up scans every text channel's recent history, so run it in
+    # the background rather than holding up the rest of on_ready.
+    asyncio.create_task(activity.on_ready())
+
 
 @client.event
 async def on_member_update(before: discord.Member, after: discord.Member):
@@ -386,6 +394,25 @@ async def on_member_update(before: discord.Member, after: discord.Member):
                     print(f"Removed booster role from {after.display_name} — role saved for future use")
                 except discord.errors.Forbidden:
                     print(f"Failed to remove booster role from {after.display_name}")
+
+
+@client.event
+async def on_member_ban(guild: discord.Guild, user: discord.User):
+    await activity.handle_member_ban(guild, user)
+
+
+@client.event
+async def on_member_remove(member: discord.Member):
+    await activity.handle_member_remove(member)
+
+
+@client.event
+async def on_voice_state_update(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState,
+):
+    await activity.handle_voice_state_update(member, before, after)
 
 
 @client.event
@@ -412,6 +439,12 @@ async def on_message(message):
         _threads_awaiting_reply.discard(message.channel.id)
 
     if message.author == client.user:
+        return
+
+    if await activity.handle_message(message):
+        return  # inactive-only channel; nothing else applies
+
+    if message.guild is None:
         return
 
     if message.channel.id in VOICE_TEXT_CHANNELS and message.author.id not in _warned_users:
@@ -507,6 +540,8 @@ async def on_raw_message_delete(payload):
 async def on_raw_reaction_add(payload):
     if payload.user_id == client.user.id:
         return
+
+    await activity.handle_raw_reaction_add(payload)
 
     if str(payload.emoji) != "🧵":
         return

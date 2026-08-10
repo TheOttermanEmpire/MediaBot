@@ -8,6 +8,6 @@ RUN pip install -U discord.py openai
 
 RUN mkdir -p /app/data
 
-COPY bot.py describe.py ./
+COPY bot.py describe.py activity.py ./
 
 CMD ["python", "bot.py"]

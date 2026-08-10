@@ -15,6 +15,28 @@ services:
       BOOSTER_ROLE_ANCHOR_ID: "YOUR_ANCHOR_ROLE_ID_HERE"
       # JSON array of voice channel IDs whose built-in text chat ("Open Chat") should be purged after 48h
       VOICE_TEXT_CHANNELS: '[123456789, 987654321]'
+
+      # --- Activity tracking / inactivity ---
+      # Role allowed to run /inactive, /left, /stats, /vcstats, /checkinactive.
+      # Defaults to MODERATOR_ROLE_ID when unset; server admins always qualify.
+      ADMIN_ROLE_ID: ""
+      # Comma-separated user IDs to exclude from activity tracking
+      EXCLUDED_USER_IDS: ""
+      # How many hours back to scan on startup to catch activity missed while offline
+      CATCHUP_HOURS: "48"
+      # Role added to members with no activity for INACTIVITY_DAYS days, checked
+      # every 24h. Leave unset to disable the inactivity loop entirely.
+      INACTIVE_ROLE_ID: ""
+      INACTIVITY_DAYS: "90"
+      # Comma-separated role IDs to skip entirely when checking for inactivity
+      IGNORED_ROLE_IDS: ""
+      # The one channel inactive members can see. The bot posts a status message
+      # there explaining /imback and deletes anything else posted in it. Set up the
+      # channel permission overwrites for INACTIVE_ROLE_ID yourself.
+      INACTIVE_CHANNEL_ID: ""
+      # Comma-separated role IDs stripped when a member is tagged inactive.
+      # Restored automatically when they run /imback.
+      REMOVE_ROLE_IDS_ON_INACTIVE: ""
     volumes:
       - ./data:/app/data
     restart: unless-stopped
