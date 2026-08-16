@@ -37,6 +37,28 @@ services:
       # Comma-separated role IDs stripped when a member is tagged inactive.
       # Restored automatically when they run /imback.
       REMOVE_ROLE_IDS_ON_INACTIVE: ""
+
+      # --- VRChat group linking ---
+      # Dedicated VRChat account the bot logs in as. It needs a group role with
+      # permission to invite and kick members in VRC_GROUP_ID.
+      VRC_USERNAME: ""
+      VRC_PASSWORD: ""
+      # Base32 TOTP secret for the account's 2FA (authenticator-app 2FA, not email codes)
+      VRC_TOTP_SECRET: ""
+      VRC_GROUP_ID: "grp_YOUR_GROUP_ID_HERE"
+      # VRChat's API usage policy expects a descriptive User-Agent identifying the
+      # app and a way to contact you — replace this with your own.
+      VRC_USER_AGENT: "VRCGangMediaBot/1.0 (contact: you@example.com)"
+      # Leave all VRC_* unset to disable VRChat linking entirely.
+
+      # Role granted to linked members whose VRChat profile publicly shows the
+      # 18+ verification badge. Leave unset to disable this check.
+      VRC_ADULT_ROLE_ID: ""
+      # Delay between each linked member's VRChat lookup during a pass, so a large
+      # membership doesn't burst past VRChat's API rate limits.
+      VRC_ADULT_CHECK_DELAY_SECONDS: "10"
+      # Hours between full passes over every linked member (a pass also runs on startup).
+      VRC_ADULT_CHECK_INTERVAL_HOURS: "24"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

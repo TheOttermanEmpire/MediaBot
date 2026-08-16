@@ -4,10 +4,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN pip install -U discord.py openai
+RUN pip install -U discord.py openai pyotp
 
 RUN mkdir -p /app/data
 
-COPY bot.py describe.py activity.py ./
+COPY bot.py describe.py activity.py vrchat.py ./
 
 CMD ["python", "bot.py"]

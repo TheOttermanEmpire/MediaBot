@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 import asyncio
 import activity
+import vrchat
 from describe import get_image_title
 
 TOKEN = os.environ["DISCORD_TOKEN"]
@@ -54,6 +55,7 @@ class RoleManagerBot(discord.Client):
 
 client = RoleManagerBot()
 activity.setup(client)
+vrchat.setup(client)
 
 url_pattern = re.compile(
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
@@ -311,16 +313,26 @@ async def _run_booster_role_reconciliation():
 
     print(f"[reconcile] Checking {len(booster_roles)} saved booster role(s)")
     removed = 0
+    rehoisted = 0
 
     for guild in client.guilds:
         if guild.id not in MONITORED_GUILDS:
             continue
         for user_id, role_id in list(booster_roles.items()):
-            member = guild.get_member(user_id)
-            if member is None:
-                continue
             role = guild.get_role(role_id)
-            if role is None or role not in member.roles:
+            if role is None:
+                continue
+
+            if not role.hoist:
+                try:
+                    await role.edit(hoist=True, reason="Booster roles should display separately (reconciliation)")
+                    rehoisted += 1
+                    print(f"[reconcile] Re-hoisted booster role {role.name}")
+                except discord.errors.Forbidden:
+                    print(f"[reconcile] Failed to hoist booster role {role.name}")
+
+            member = guild.get_member(user_id)
+            if member is None or role not in member.roles:
                 continue
             if not member_is_booster(member):
                 try:
@@ -330,7 +342,7 @@ async def _run_booster_role_reconciliation():
                 except discord.errors.Forbidden:
                     print(f"[reconcile] Failed to remove booster role from {member.display_name}")
 
-    print(f"[reconcile] Done — {removed} role(s) removed")
+    print(f"[reconcile] Done — {removed} role(s) removed, {rehoisted} role(s) re-hoisted")
 
 
 @tasks.loop(hours=1)
@@ -378,6 +390,7 @@ async def on_ready():
     # Activity catch-up scans every text channel's recent history, so run it in
     # the background rather than holding up the rest of on_ready.
     asyncio.create_task(activity.on_ready())
+    asyncio.create_task(vrchat.on_ready())
 
 
 @client.event
@@ -404,6 +417,7 @@ async def on_member_ban(guild: discord.Guild, user: discord.User):
 @client.event
 async def on_member_remove(member: discord.Member):
     await activity.handle_member_remove(member)
+    await vrchat.handle_member_remove(member)
 
 
 @client.event
@@ -715,7 +729,7 @@ async def set_role(
             final_color = color_parsed if color_parsed is not None else role.color
             if name is not None or color is not None:
                 try:
-                    await discord_retry(role.edit, name=final_name, color=final_color, label="/role edit")
+                    await discord_retry(role.edit, name=final_name, color=final_color, hoist=True, label="/role edit")
                 except discord.errors.Forbidden:
                     await interaction.followup.send("I don't have permission to edit that role.", ephemeral=True)
                     return
@@ -731,7 +745,7 @@ async def set_role(
                 )
                 return
             try:
-                role = await discord_retry(guild.create_role, name=name, color=color_parsed, label="/role create")
+                role = await discord_retry(guild.create_role, name=name, color=color_parsed, hoist=True, label="/role create")
             except discord.errors.Forbidden:
                 await interaction.followup.send("I don't have permission to create roles.", ephemeral=True)
                 return
@@ -749,7 +763,7 @@ async def set_role(
             )
             return
         try:
-            role = await discord_retry(guild.create_role, name=name, color=color_parsed, label="/role create")
+            role = await discord_retry(guild.create_role, name=name, color=color_parsed, hoist=True, label="/role create")
         except discord.errors.Forbidden:
             await interaction.followup.send("I don't have permission to create roles.", ephemeral=True)
             return
@@ -821,6 +835,12 @@ async def import_role(
 
     booster_roles[user.id] = role.id
     save_booster_roles(booster_roles)
+
+    if not role.hoist:
+        try:
+            await discord_retry(role.edit, hoist=True, label="/importrole hoist")
+        except discord.errors.Forbidden:
+            print(f"Failed to hoist imported role {role.name}")
 
     if role not in user.roles:
         try:

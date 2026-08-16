@@ -64,6 +64,24 @@ Optionally, `REMOVE_ROLE_IDS_ON_INACTIVE` lists roles to strip when a member is 
 
 Set `INACTIVE_CHANNEL_ID` to nominate a single channel that inactive members can see. The bot posts a status message there explaining `/imback` and deletes anything else posted in it. You need to set up the channel permission overwrites for `INACTIVE_ROLE_ID` yourself so it's the only channel they can see.
 
+### VRChat group linking
+
+Links a Discord member to a VRChat account, so that leaving, being kicked, or being banned from Discord also removes them from your VRChat group.
+
+**`/vrcjoin`** — Available to everyone. Run with no arguments for instructions on finding your VRChat profile link/ID.
+
+**`/vrcjoin profile:<link or usr_... ID>`** — Sends a VRChat group invite to the given account. The account isn't linked until the invite is **accepted in VRChat within 10 minutes** — accepting is what proves the Discord member actually owns that account. If it isn't accepted in time, the invite is dropped and they can try again. If the account is already a group member, there's nothing to accept, so it can only be linked by an admin.
+
+**`/vrcunlink`** — Available to everyone. Removes your Discord↔VRChat link (and cancels a pending invite, if any). Leaving Discord afterward no longer removes you from the VRChat group — you stay in it if you'd already joined. It does not remove you from the group itself; leave the group in VRChat directly if that's what you want.
+
+**`/vrclinkadmin member:<member> profile:<link or usr_... ID>`** — Admins can link any member to any VRChat account immediately, without the accept step (useful for accounts already in the group, or when the invite flow doesn't work). Sends a group invite as a courtesy if the account isn't already a member.
+
+Requires a dedicated VRChat account for the bot to log into, with a group role granting invite and kick permissions in `VRC_GROUP_ID`. Set `VRC_USERNAME`, `VRC_PASSWORD`, `VRC_TOTP_SECRET` (its authenticator-app 2FA secret — email-code 2FA can't be automated), and `VRC_GROUP_ID` to enable this feature; leave them unset to disable it entirely.
+
+If `VRC_ADULT_ROLE_ID` is set, the bot also keeps that role in sync with each linked member's VRChat 18+ verification badge (`ageVerificationStatus == "18+"` — the badge only shows when the account has verified *and* chosen to display it, not merely completed verification). It's applied immediately when a link is confirmed, then rechecked automatically every `VRC_ADULT_CHECK_INTERVAL_HOURS` (not on startup). Each pass checks one linked member every `VRC_ADULT_CHECK_DELAY_SECONDS` rather than all at once, to stay well under VRChat's API rate limits.
+
+**`/checkadult`** — Admin-only (same role check as the activity commands). Runs an 18+ verification pass immediately instead of waiting for the next scheduled one.
+
 ## Configuration
 
 All configuration is via environment variables.
@@ -103,6 +121,21 @@ All configuration is via environment variables.
 | `INACTIVE_CHANNEL_ID` | No | The one channel inactive members can see |
 | `REMOVE_ROLE_IDS_ON_INACTIVE` | No | Comma-separated role IDs to strip when tagging a member inactive, restored on `/imback` |
 
+### VRChat group linking
+
+| Variable | Required | Description |
+|---|---|---|
+| `VRC_USERNAME` | For this feature | Username of the dedicated VRChat account the bot logs in as |
+| `VRC_PASSWORD` | For this feature | Password for that account |
+| `VRC_TOTP_SECRET` | For this feature | Base32 TOTP secret for the account's authenticator-app 2FA |
+| `VRC_GROUP_ID` | For this feature | The VRChat group ID (`grp_...`) to invite/remove members from |
+| `VRC_USER_AGENT` | No | User-Agent sent to the VRChat API — replace the default with your own contact info per VRChat's API usage policy |
+| `VRC_ADULT_ROLE_ID` | No | Role kept in sync with linked members' VRChat 18+ verification badge. Leave unset to disable this check |
+| `VRC_ADULT_CHECK_DELAY_SECONDS` | No | Delay between each linked member's VRChat lookup during a pass (default `10`) |
+| `VRC_ADULT_CHECK_INTERVAL_HOURS` | No | Hours between full passes over every linked member (default `24`) |
+
+All four required variables must be set together; if any are missing, `/vrcjoin` and `/vrclinkadmin` respond that the feature isn't configured, and no members are ever removed from the group.
+
 ### Setting up `BOOSTER_ROLE_ANCHOR_ID`
 
 Create a placeholder role in your server (e.g. `── Boosters ──`) and place it just above where you want custom booster roles to appear. Set `BOOSTER_ROLE_ANCHOR_ID` to its ID. The bot will stack all booster roles directly below it, sorted by boost date.
@@ -120,8 +153,9 @@ State is persisted to `./data` via a volume mount:
 - `activity.json` — activity history, leave records, and stripped-role bookkeeping
 - `booster_roles.json` — the member-to-role mapping for custom booster roles
 - `voice_warned_users.json` — who has already seen the voice chat warning
+- `vrc_links.json` — confirmed and pending Discord-to-VRChat account links
 
-Back up `./data` before upgrading; deleting `activity.json` resets all activity history, and deleting `booster_roles.json` orphans every custom booster role.
+Back up `./data` before upgrading; deleting `activity.json` resets all activity history, deleting `booster_roles.json` orphans every custom booster role, and deleting `vrc_links.json` stops auto-removal from the VRChat group for everyone previously linked.
 
 Each path can be overridden if you need a different layout:
 
@@ -130,6 +164,7 @@ Each path can be overridden if you need a different layout:
 | `ACTIVITY_DB_FILE` | `/app/data/activity.json` |
 | `BOOSTER_ROLES_FILE` | `/app/data/booster_roles.json` |
 | `VOICE_WARNED_USERS_FILE` | `/app/data/voice_warned_users.json` |
+| `VRC_LINKS_DB_FILE` | `/app/data/vrc_links.json` |
 
 ## Required bot permissions
 
@@ -142,7 +177,7 @@ Each path can be overridden if you need a different layout:
 - Create Public Threads
 - View Audit Log (optional — used to tell kicks apart from voluntary leaves in `/left`; without it, kicks are recorded as ordinary leaves)
 
-The bot's own role must sit above any role it manages, including custom booster roles and the inactive role.
+The bot's own role must sit above any role it manages, including custom booster roles, the inactive role, and `VRC_ADULT_ROLE_ID`.
 
 ## Required privileged intents
 
